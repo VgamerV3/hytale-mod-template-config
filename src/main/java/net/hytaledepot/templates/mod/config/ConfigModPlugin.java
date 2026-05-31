@@ -1,6 +1,5 @@
 package net.hytaledepot.templates.mod.config;
 
-import com.hypixel.hytale.protocol.GameMode;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
 import com.hypixel.hytale.server.core.command.system.basecommands.CommandBase;
@@ -103,12 +102,12 @@ public final class ConfigModPlugin extends JavaPlugin {
     private ConfigModStatusCommand() {
       super("hdconfigmodstatus", "Shows runtime status for ConfigModPlugin.");
     setAllowsExtraArguments(true);
-      this.setPermissionGroup(GameMode.Adventure);
+      setPermissionGroups("hytale:Adventurer");
     }
 
     @Override
     protected void executeSync(CommandContext ctx) {
-      String sender = String.valueOf(ctx.sender().getDisplayName());
+      String sender = String.valueOf(ctx.sender().getUsername());
       String line =
           "[ConfigMod] lifecycle="
               + lifecycle
@@ -129,13 +128,13 @@ public final class ConfigModPlugin extends JavaPlugin {
     private ConfigModDemoCommand() {
       super("hdconfigmoddemo", "Runs a demo action for ConfigModPlugin.");
     setAllowsExtraArguments(true);
-      this.setPermissionGroup(GameMode.Adventure);
+      setPermissionGroups("hytale:Adventurer");
     }
 
     @Override
     protected void executeSync(CommandContext ctx) {
       String action = parseAction(ctx.getInputString(), "sample");
-      String sender = String.valueOf(ctx.sender().getDisplayName());
+      String sender = String.valueOf(ctx.sender().getUsername());
 
       String response = service.runAction(sender, action, heartbeatTicks.get());
       ctx.sendMessage(Message.raw(response));
