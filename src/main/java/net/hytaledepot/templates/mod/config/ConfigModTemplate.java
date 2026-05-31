@@ -1,41 +1,38 @@
 package net.hytaledepot.templates.mod.config;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ConfigModTemplate {
   private final Map<String, AtomicLong> actionCounters = new ConcurrentHashMap<>();
   private final Map<String, String> lastActionBySender = new ConcurrentHashMap<>();
   private final AtomicBoolean demoFlagEnabled = new AtomicBoolean(false);
   private final AtomicLong errorCount = new AtomicLong();
-  private final Map<String, String> domainState = new ConcurrentHashMap<>();
-  private final Map<String, AtomicLong> numericState = new ConcurrentHashMap<>();
-
+  Properties liveConfig = new Properties();
   private volatile Path dataDirectory;
+  private volatile Path configFile;
 
   public void onInitialize(Path dataDirectory) {
     this.dataDirectory = dataDirectory;
-    actionCounters.clear();
-    lastActionBySender.clear();
-    domainState.clear();
-    numericState.clear();
+    this.configFile = dataDirectory.resolve("config-template.properties");
+    loadConfig();
   }
 
   public void onShutdown() {
-    actionCounters.clear();
-    lastActionBySender.clear();
-    domainState.clear();
-    numericState.clear();
+    saveConfig();
   }
 
   public void onHeartbeat(long tick) {
     actionCounters.computeIfAbsent("heartbeat", key -> new AtomicLong()).incrementAndGet();
-    if (tick % 90 == 0) {
-      actionCounters.computeIfAbsent("milestone", key -> new AtomicLong()).incrementAndGet();
-    }
+
   }
 
   public String runAction(String sender, String action, long heartbeatTicks) {
@@ -64,24 +61,13 @@ public final class ConfigModTemplate {
 
   public String diagnostics(String sender, long heartbeatTicks) {
     String directory = dataDirectory == null ? "unset" : dataDirectory.toString();
-    return "sender="
-        + sender
-        + ", heartbeatTicks="
-        + heartbeatTicks
-        + ", demoFlag="
-        + demoFlagEnabled.get()
-        + ", ops="
-        + operationCount()
-        + ", lastAction="
-        + lastActionBySender.getOrDefault(sender, "none")
-        + ", errors="
-        + errorCount.get()
-        + ", domainEntries="
-        + domainState.size()
-        + ", numericEntries="
-        + numericState.size()
-        + ", dataDirectory="
-        + directory;
+    return "sender=" + sender
+        + ", heartbeatTicks=" + heartbeatTicks
+        + ", demoFlag=" + demoFlagEnabled.get()
+        + ", ops=" + operationCount()
+        + ", lastAction=" + lastActionBySender.getOrDefault(sender, "none")
+        + ", errors=" + errorCount.get()
+        + ", configKeys=" + liveConfig.size() + ", pvp=" + liveConfig.getProperty("pvp", "true") + ", maxPlayers=" + liveConfig.getProperty("maxPlayers", "80") + ", dataDirectory=" + directory;
   }
 
   public long operationCount() {
@@ -98,31 +84,53 @@ public final class ConfigModTemplate {
 
   private String handleDomainAction(String sender, String action, long heartbeatTicks) {
     if ("sample".equals(action) || "reload-config".equals(action)) {
-      domainState.put("config:pvp", "true");
-      domainState.put("config:maxPlayers", "80");
-      return "config reloaded (pvp=" + domainState.get("config:pvp") + ", maxPlayers=" + domainState.get("config:maxPlayers") + ")";
+      loadConfig();
+      return "config reloaded (pvp=" + liveConfig.getProperty("pvp") + ", maxPlayers=" + liveConfig.getProperty("maxPlayers") + ")";
     }
     if ("set-config".equals(action)) {
-      String next = "true".equals(domainState.get("config:pvp")) ? "false" : "true";
-      domainState.put("config:pvp", next);
+      String next = "true".equals(liveConfig.getProperty("pvp", "true")) ? "false" : "true";
+      liveConfig.setProperty("pvp", next);
+      saveConfig();
       return "config:pvp=" + next;
     }
     if ("get-config".equals(action)) {
-      return "config:pvp=" + domainState.getOrDefault("config:pvp", "true") + ", config:maxPlayers=" + domainState.getOrDefault("config:maxPlayers", "80");
+      return "config:pvp=" + liveConfig.getProperty("pvp", "true") + ", config:maxPlayers=" + liveConfig.getProperty("maxPlayers", "80");
     }
     return null;
   }
 
-  private long incrementNumber(String key, long delta) {
-    return numericState.computeIfAbsent(key, item -> new AtomicLong()).addAndGet(delta);
+  private void loadConfig() {
+    liveConfig.clear();
+    liveConfig.setProperty("pvp", "true");
+    liveConfig.setProperty("maxPlayers", "80");
+    if (configFile == null || !Files.exists(configFile)) {
+      saveConfig();
+      return;
+    }
+    try (InputStream in = Files.newInputStream(configFile)) {
+      liveConfig.load(in);
+    } catch (IOException ignored) {
+      liveConfig.setProperty("pvp", "true");
+      liveConfig.setProperty("maxPlayers", "80");
+    }
   }
 
-  private long number(String key) {
-    return numericState.computeIfAbsent(key, item -> new AtomicLong()).get();
+  private void saveConfig() {
+    if (configFile == null) {
+      return;
+    }
+    try {
+      Files.createDirectories(configFile.getParent());
+      try (OutputStream out = Files.newOutputStream(configFile)) {
+        liveConfig.store(out, "Config template state");
+      }
+    } catch (IOException ignored) {
+    }
   }
 
-  private void setNumber(String key, long value) {
-    numericState.computeIfAbsent(key, item -> new AtomicLong()).set(value);
+  private static String normalizeAction(String action) {
+    String normalized = String.valueOf(action == null ? "" : action).trim().toLowerCase();
+    return normalized.isEmpty() ? "sample" : normalized;
   }
 
   private static boolean toggleFlag(AtomicBoolean flag) {
@@ -133,10 +141,5 @@ public final class ConfigModTemplate {
         return next;
       }
     }
-  }
-
-  private static String normalizeAction(String action) {
-    String normalized = String.valueOf(action == null ? "" : action).trim().toLowerCase();
-    return normalized.isEmpty() ? "sample" : normalized;
   }
 }
